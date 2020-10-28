@@ -17,36 +17,37 @@
  */
 package org.wso2.sample.identity.oauth2.grant.ed25519;
 
-import org.apache.commons.codec.binary.Base64;
+import com.hierynomus.sshj.userauth.certificate.Certificate;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.json.JSONObject;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
 import org.wso2.carbon.identity.oauth2.IdentityOAuth2Exception;
 import org.wso2.carbon.identity.oauth2.model.RequestParameter;
 import org.wso2.carbon.identity.oauth2.token.OAuthTokenReqMessageContext;
 import org.wso2.carbon.identity.oauth2.token.handlers.grant.AbstractAuthorizationGrantHandler;
 import org.wso2.carbon.identity.oauth2.util.OAuth2Util;
+import org.wso2.sample.identity.oauth2.grant.ed25519.model.sshj.Buffer;
+import org.wso2.sample.identity.oauth2.grant.ed25519.model.sshj.KeyType;
 
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.URL;
-import javax.net.ssl.HttpsURLConnection;
+import java.security.GeneralSecurityException;
+import java.security.PublicKey;
+import java.util.List;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  * X509 grant type for Identity Server
  */
 public class X509GrantHandler extends AbstractAuthorizationGrantHandler  {
 
+    public static final String SSH_CERT_TYPE_ED25519 = "ssh-ed25519-cert-v01@openssh.com";
     private static Log log = LogFactory.getLog(X509GrantHandler.class);
     public static final String X509_GRANT_PARAM = "x509";
 
     @Override
-    public boolean validateGrant(OAuthTokenReqMessageContext oAuthTokenReqMessageContext)  throws IdentityOAuth2Exception {
+    public boolean validateGrant(OAuthTokenReqMessageContext oAuthTokenReqMessageContext)  throws
+            IdentityOAuth2Exception {
 
-        log.info("X.509 Grant handler is invoked by me");
         boolean authStatus = false;
         // extract request parameters
         RequestParameter[] parameters = oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getRequestParameters();
@@ -71,12 +72,11 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler  {
             log.debug("Username is retrieved from Subject DN : " + username);
         } else {
             if (certParam != null) {
-                //validate certificate number
-                username = validCertificate(certParam);
+                username = getUserFromSSHCert(certParam);
                 log.debug("Username is retrieved from Certificate : " + username);
             }
         }
-        if(username != null) {
+        if (username != null) {
             // if valid set authorized mobile number as grant user
             AuthenticatedUser user = OAuth2Util.getUserFromUserName(username);
             user.setAuthenticatedSubjectIdentifier(user.toString());
@@ -87,59 +87,44 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler  {
         return authStatus;
     }
 
+    private String getUserFromSSHCert(String sshCertificate) {
 
-    /**
-     * TODO
-     *
-     * You need to implement how to validate the certificate
-     *
-     * @param certificate
-     * @return
-     */
-    protected String validCertificate(String certificate){
-        // retrieve the certificate object
-        byte[] byteArray = Base64.decodeBase64(certificate);
+        String[] split = sshCertificate.trim().split("\\s+");
+        byte[] encodedCert = java.util.Base64.getMimeDecoder().decode(split[1].getBytes(UTF_8));
 
-        JSONObject decodedCertificate = decodeCertificate(certificate);
-        String subjectCN = decodedCertificate.getString("username");
-            log.debug("Username is retrieved from subjectCN : " + subjectCN);
-
-            return subjectCN;
-    }
-
-    private JSONObject decodeCertificate(String encodedCertificate) {
-
-        HttpsURLConnection connection = null;
-        String urlParam = "{\"certificate\" : \"" + encodedCertificate + "\"}";
-
+        Buffer.PlainBuffer plainBuffer = new Buffer.PlainBuffer(encodedCert);
+        String certificateType;
         try {
-            URL url = new URL("https://localhost:8443/user");
-            connection = (HttpsURLConnection) url.openConnection();
-            connection.setRequestMethod("POST");
-            connection.setRequestProperty("Content-Type", "application/json");
+            certificateType = plainBuffer.readString();
+        } catch (Buffer.BufferException e) {
+            log.error(e);
+            return null;
+        }
 
-            connection.setRequestProperty("Content-Length", Integer.toString(urlParam.getBytes().length));
-            connection.setRequestProperty("Content-Language", "en-US");
+        if(SSH_CERT_TYPE_ED25519.equals(certificateType)) {
+            KeyType keyType = KeyType.fromString(SSH_CERT_TYPE_ED25519);
+            PublicKey publicKey;
+            try {
+                publicKey = keyType.readPubKeyFromBuffer(plainBuffer);
 
-            connection.setUseCaches(false);
-            connection.setDoOutput(true);
+                if (log.isDebugEnabled()) {
+                    log.debug("PublicKey algorithm " + publicKey.getAlgorithm());
+                }
 
-            DataOutputStream wr = new DataOutputStream(connection.getOutputStream());
-            wr.writeBytes(urlParam);
-            wr.close();
+                if (publicKey instanceof Certificate) {
+                    Certificate certificate = (Certificate) publicKey;
 
-            InputStream is = connection.getInputStream();
-            BufferedReader rd = new BufferedReader(new InputStreamReader(is));
-            StringBuilder response = new StringBuilder();
-            rd.lines().forEach(response::append);
-            rd.close();
-
-            return new JSONObject(response.toString());
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
+                    List<String> validPrincipals = certificate.getValidPrincipals();
+                    if (validPrincipals != null && !validPrincipals.isEmpty()) {
+                        String principal = validPrincipals.get(0);
+                        if (log.isDebugEnabled()) {
+                            log.debug("User principal from cert: " + principal);
+                        }
+                        return principal;
+                    }
+                }
+            } catch (GeneralSecurityException e) {
+                log.error(e);
             }
         }
         return null;
