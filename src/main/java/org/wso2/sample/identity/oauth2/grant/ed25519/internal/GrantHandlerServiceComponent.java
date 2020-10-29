@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2020, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.wso2.sample.identity.oauth2.grant.ed25519.internal;
 
 import org.apache.commons.logging.Log;
@@ -21,7 +39,8 @@ public class GrantHandlerServiceComponent {
     @Activate
     protected void activate(BundleContext bundleContext) {
 
-        logger.info("org.wso2.sample.identity.oauth2.grant.ed25519.internal.GrantHandlerServiceComponent is activated");
+        logger.info("org.wso2.sample.identity.oauth2.grant.ed25519.internal.GrantHandlerServiceComponent is " +
+                "activated");
     }
 
     /**
@@ -38,7 +57,8 @@ public class GrantHandlerServiceComponent {
     protected void setRealmService(RealmService realmService) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("realmService set in SCIMCommonComponent bundle");
+            logger.debug("realmService set in " +
+                    "org.wso2.sample.identity.oauth2.grant.ed25519.internal.GrantHandlerServiceComponent bundle");
         }
         GrantHandlerServiceComponent.realmService = realmService;
     }
@@ -49,7 +69,8 @@ public class GrantHandlerServiceComponent {
     protected void unsetRealmService(RealmService realmService) {
 
         if (logger.isDebugEnabled()) {
-            logger.debug("realmService unset in SCIMCommonComponent bundle");
+            logger.debug("realmService unset in " +
+                    "org.wso2.sample.identity.oauth2.grant.ed25519.internal.GrantHandlerServiceComponent bundle");
         }
         GrantHandlerServiceComponent.realmService = null;
     }
