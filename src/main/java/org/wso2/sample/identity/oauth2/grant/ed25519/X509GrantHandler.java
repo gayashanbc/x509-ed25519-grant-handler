@@ -59,7 +59,7 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
             IdentityOAuth2Exception {
 
         String certificateParameterValue = null;
-        String username = null;
+        String username;
 
         // Extract request parameters.
         RequestParameter[] requestParameters = oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO()
@@ -73,10 +73,11 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
             }
         }
 
-        // Extract 'Principal' from the presented certificate.
-        if (certificateParameterValue != null) {
-            username = ExtractUserFromSSHCertificate(certificateParameterValue);
+        if (certificateParameterValue == null) {
+            throw new IdentityOAuth2Exception("'x509' parameter was not found in token request.");
         }
+        // Extract 'Principal' from the presented certificate.
+        username = extractUserFromSSHCertificate(certificateParameterValue);
 
         if (username == null) {
             throw new IdentityOAuth2Exception("Principal was not found in the provided certificate.");
@@ -134,49 +135,76 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
         }
     }
 
-    private String ExtractUserFromSSHCertificate(String sshCertificate) {
+    private String extractUserFromSSHCertificate(String sshCertificate) {
 
+        /*
+        The certificate will be in the format '<algorithm> <key> <comment>'
+        ex: 'ssh-ed25519-cert-v01@openssh.com AAAAB3Nza... user@host'.
+        We need to extract the 'key' component from the certificate.
+         */
         String[] split = sshCertificate.trim().split("\\s+");
-        byte[] encodedCert = java.util.Base64.getMimeDecoder().decode(split[1].getBytes(UTF_8));
 
-        Buffer.PlainBuffer plainBuffer = new Buffer.PlainBuffer(encodedCert);
-        String certificateType;
+        if (split.length >= 2) {
+            byte[] encodedCert = java.util.Base64.getMimeDecoder().decode(split[1].getBytes(UTF_8));
 
-        try {
-            certificateType = plainBuffer.readString();
-        } catch (Buffer.BufferException e) {
-            log.error(e);
-            return null;
-        }
-
-        if (SSH_CERT_TYPE_ED25519.equals(certificateType)) {
-            KeyType keyType = KeyType.fromString(SSH_CERT_TYPE_ED25519);
-            PublicKey publicKey;
+            Buffer.PlainBuffer plainBuffer = new Buffer.PlainBuffer(encodedCert);
+            String certificateType;
 
             try {
-                publicKey = keyType.readPubKeyFromBuffer(plainBuffer);
+                certificateType = plainBuffer.readString();
+            } catch (Buffer.BufferException e) {
+                log.error(e);
+                return null;
+            }
 
+            if (log.isDebugEnabled()) {
+                log.debug("Received certificate type: " + certificateType);
+            }
+
+            if (SSH_CERT_TYPE_ED25519.equals(certificateType)) {
                 if (log.isDebugEnabled()) {
-                    log.debug("PublicKey algorithm from certificate: " + publicKey.getAlgorithm());
+                    log.debug("Received certificate type: " + certificateType + " matches the expected certificate" +
+                            " type: " + SSH_CERT_TYPE_ED25519);
                 }
 
-                if (publicKey instanceof Certificate) {
-                    Certificate certificate = (Certificate) publicKey;
-                    List<String> validPrincipals = certificate.getValidPrincipals();
+                KeyType keyType = KeyType.fromString(SSH_CERT_TYPE_ED25519);
+                PublicKey publicKey;
 
-                    if (validPrincipals != null && !validPrincipals.isEmpty()) {
-                        String principal = validPrincipals.get(0);
+                try {
+                    publicKey = keyType.readPubKeyFromBuffer(plainBuffer);
+
+                    if (log.isDebugEnabled()) {
+                        log.debug("PublicKey algorithm from certificate: " + publicKey.getAlgorithm());
+                    }
+
+                    if (publicKey instanceof Certificate) {
+                        Certificate certificate = (Certificate) publicKey;
+                        List<String> validPrincipals = certificate.getValidPrincipals();
+
+                        if (validPrincipals != null && !validPrincipals.isEmpty()) {
+                            // Only the 1st user principal is considered.
+                            String principal = validPrincipals.get(0);
+
+                            if (log.isDebugEnabled()) {
+                                log.debug("User principal from certificate: " + principal);
+                            }
+                            return principal;
+                        }
 
                         if (log.isDebugEnabled()) {
-                            log.debug("User principal from certificate: " + principal);
+                            log.debug("No valid principal(s) found in the provided certificate.");
                         }
-                        return principal;
                     }
+                } catch (GeneralSecurityException e) {
+                    log.error(e);
                 }
-            } catch (GeneralSecurityException e) {
-                log.error(e);
             }
         }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Certificate does not contain the minimum number of expected sections: 2");
+        }
+
         return null;
     }
 
