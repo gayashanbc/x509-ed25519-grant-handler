@@ -33,7 +33,8 @@ You can find the `wso2is-identity-samples-oauth2-ssh-ed25519-cert-v01-grant-1.0.
     ![OAuth Client Credentials](https://user-images.githubusercontent.com/15249242/91567068-27155e00-e962-11ea-8eab-b3bdd790bfd4.png)
 
 ### Trying out
-Executing the following sample cURL request to try out the grant handler after replacing `<OAuth Client Key>` and `<OAuth Client Secret>` with the respective values.
+Executing the following sample cURL request to try out the grant handler after replacing `<OAuth Client Key>` and `<OAuth Client Secret>` with the respective values.<br/>
+Note: A user matching the principal in the presented certificate should exist in WSO2 Identity Server.
 ```shell script
 curl -kv \ 
  --data-urlencode "grant_type=x509" \
@@ -52,4 +53,3 @@ Modify the `log4j2.properties` file located in `<IS_HOME>/repository/conf` as fo
     logger.org-wso2-sample-identity-oauth2-grant-ed25519.name=org.wso2.sample.identity.oauth2.grant.ed25519
     logger.org-wso2-sample-identity-oauth2-grant-ed25519.level=DEBUG
     ```
-3. Restart WSO2 IS.
