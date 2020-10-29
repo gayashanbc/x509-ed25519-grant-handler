@@ -1,5 +1,5 @@
 /*
- * Copyright (c) WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2020, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
  *
  * WSO2 Inc. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -15,9 +15,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.wso2.sample.identity.oauth2.grant.ed25519;
 
 import com.hierynomus.sshj.userauth.certificate.Certificate;
+import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
@@ -36,122 +39,186 @@ import org.wso2.sample.identity.oauth2.grant.ed25519.model.sshj.KeyType;
 import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.List;
+import java.util.Map;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
- * X509 grant type for Identity Server
+ * ssh-ed25519-cert-v01 grant type for Identity Server
  */
-public class X509GrantHandler extends AbstractAuthorizationGrantHandler  {
+public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
 
-    public static final String SSH_CERT_TYPE_ED25519 = "ssh-ed25519-cert-v01@openssh.com";
+    private static final String SSH_CERT_TYPE_ED25519 = "ssh-ed25519-cert-v01@openssh.com";
+    private static final String ACCOUNT_LOCKED_CLAIM = "http://wso2.org/claims/identity/accountLocked";
+    private static final String ACCOUNT_DISABLED_CLAIM = "http://wso2.org/claims/identity/accountDisabled";
     private static Log log = LogFactory.getLog(X509GrantHandler.class);
-    public static final String X509_GRANT_PARAM = "x509";
+    private static final String X509_GRANT_PARAM = "x509";
 
     @Override
-    public boolean validateGrant(OAuthTokenReqMessageContext oAuthTokenReqMessageContext)  throws
+    public boolean validateGrant(OAuthTokenReqMessageContext oAuthTokenReqMessageContext) throws
             IdentityOAuth2Exception {
 
-        boolean authStatus = false;
-        // extract request parameters
-        RequestParameter[] parameters = oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getRequestParameters();
-        String certParam = null;
-        String subjectDN = null;
-        // find out subjectDN
-        for(RequestParameter parameter : parameters){
-            if(X509_GRANT_PARAM.equals(parameter.getKey())){
-                if(parameter.getValue() != null && parameter.getValue().length > 0){
-                    certParam = parameter.getValue()[0];
-                }
-            } else if("subjectDN".equalsIgnoreCase(parameter.getKey())) {
-                if(parameter.getValue() != null && parameter.getValue().length > 0){
-                    subjectDN = parameter.getValue()[0];
-                }
+        String certificateParameterValue = null;
+        String username;
+
+        // Extract request parameters.
+        RequestParameter[] requestParameters = oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO()
+                .getRequestParameters();
+
+        // Extract 'x509' param from the request.
+        for (RequestParameter parameter : requestParameters) {
+            if (X509_GRANT_PARAM.equals(parameter.getKey()) && !ArrayUtils.isEmpty(parameter.getValue())) {
+                certificateParameterValue = parameter.getValue()[0];
+                break;
             }
         }
 
-        String username = null;
-        if(subjectDN != null) {
-            username = subjectDN;
-            log.debug("Username is retrieved from Subject DN : " + username);
-        } else {
-            if (certParam != null) {
-                username = getUserFromSSHCert(certParam);
-            }
+        if (certificateParameterValue == null) {
+            throw new IdentityOAuth2Exception("'x509' parameter was not found in token request.");
+        }
+        // Extract 'Principal' from the presented certificate.
+        username = extractUserFromSSHCertificate(certificateParameterValue);
+
+        if (username == null) {
+            throw new IdentityOAuth2Exception("Principal was not found in the provided certificate.");
         }
 
-        UserStoreManager userStoreManager;
-        int tenantId = IdentityTenantUtil.getTenantId(oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getTenantDomain());
+        UserStoreManager userStoreManager = getUserStoreManager(oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO()
+                .getTenantDomain());
+
         try {
-            userStoreManager = GrantHandlerServiceComponent.getRealmService().
-                    getTenantUserRealm(tenantId).getUserStoreManager();
-            if (username != null && userStoreManager != null && !userStoreManager.isExistingUser(username)) {
-                throw new IdentityOAuth2Exception("User: " + username + " does not exist.");
+            if (userStoreManager != null) {
+                // Check whether the 'Principal' is an existing user.
+                if (!userStoreManager.isExistingUser(username)) {
+                    throw new IdentityOAuth2Exception("User: " + username + " does not exist.");
+                }
+
+                // Retrieve 'accountLocked' and 'accountDisabled' claim of user.
+                Map<String, String> userClaimValues = userStoreManager.getUserClaimValues(username,
+                        new String[]{ACCOUNT_LOCKED_CLAIM, ACCOUNT_DISABLED_CLAIM}, null);
+
+                String accountLockedClaimValue = userClaimValues.get(ACCOUNT_LOCKED_CLAIM);
+                String accountDisabledClaimValue = userClaimValues.get(ACCOUNT_DISABLED_CLAIM);
+
+                // Check if user is locked.
+                if (StringUtils.isNotEmpty(accountLockedClaimValue) && Boolean.parseBoolean(accountLockedClaimValue)) {
+                    throw new IdentityOAuth2Exception("User: " + username + " is locked.");
+                }
+
+                // Check if user is disabled.
+                if (StringUtils.isNotEmpty(accountDisabledClaimValue) && Boolean.parseBoolean(accountDisabledClaimValue)) {
+                    throw new IdentityOAuth2Exception("User: " + username + " is disabled.");
+                }
             }
         } catch (UserStoreException e) {
-            throw new IdentityOAuth2Exception("Error occurred while getting user store manager", e);
+            throw new IdentityOAuth2Exception("Error occurred while performing user store operation.", e);
         }
 
-        // if valid set authorized mobile number as grant user
         AuthenticatedUser user = OAuth2Util.getUserFromUserName(username);
         user.setAuthenticatedSubjectIdentifier(user.toString());
         oAuthTokenReqMessageContext.setAuthorizedUser(user);
         oAuthTokenReqMessageContext.setScope(oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getScope());
+
         return true;
     }
 
-    private String getUserFromSSHCert(String sshCertificate) {
+    private UserStoreManager getUserStoreManager(String tenantDomain)
+            throws IdentityOAuth2Exception {
 
-        String[] split = sshCertificate.trim().split("\\s+");
-        byte[] encodedCert = java.util.Base64.getMimeDecoder().decode(split[1].getBytes(UTF_8));
+        int tenantId = IdentityTenantUtil.getTenantId(tenantDomain);
 
-        Buffer.PlainBuffer plainBuffer = new Buffer.PlainBuffer(encodedCert);
-        String certificateType;
         try {
-            certificateType = plainBuffer.readString();
-        } catch (Buffer.BufferException e) {
-            log.error(e);
-            return null;
+            return GrantHandlerServiceComponent.getRealmService().getTenantUserRealm(tenantId).getUserStoreManager();
+
+        } catch (UserStoreException e) {
+            throw new IdentityOAuth2Exception("Error occurred while getting the user store manager.", e);
         }
+    }
 
-        if(SSH_CERT_TYPE_ED25519.equals(certificateType)) {
-            KeyType keyType = KeyType.fromString(SSH_CERT_TYPE_ED25519);
-            PublicKey publicKey;
+    private String extractUserFromSSHCertificate(String sshCertificate) {
+
+        /*
+        The certificate will be in the format '<algorithm> <key> <comment>'
+        ex: 'ssh-ed25519-cert-v01@openssh.com AAAAB3Nza... user@host'.
+        We need to extract the 'key' component from the certificate.
+         */
+        String[] split = sshCertificate.trim().split("\\s+");
+
+        if (split.length >= 2) {
+            byte[] encodedCert = java.util.Base64.getMimeDecoder().decode(split[1].getBytes(UTF_8));
+
+            Buffer.PlainBuffer plainBuffer = new Buffer.PlainBuffer(encodedCert);
+            String certificateType;
+
             try {
-                publicKey = keyType.readPubKeyFromBuffer(plainBuffer);
-
-                if (log.isDebugEnabled()) {
-                    log.debug("PublicKey algorithm " + publicKey.getAlgorithm());
-                }
-
-                if (publicKey instanceof Certificate) {
-                    Certificate certificate = (Certificate) publicKey;
-
-                    List<String> validPrincipals = certificate.getValidPrincipals();
-                    if (validPrincipals != null && !validPrincipals.isEmpty()) {
-                        String principal = validPrincipals.get(0);
-                        if (log.isDebugEnabled()) {
-                            log.debug("User principal from cert: " + principal);
-                        }
-                        return principal;
-                    }
-                }
-            } catch (GeneralSecurityException e) {
+                certificateType = plainBuffer.readString();
+            } catch (Buffer.BufferException e) {
                 log.error(e);
+                return null;
+            }
+
+            if (log.isDebugEnabled()) {
+                log.debug("Received certificate type: " + certificateType);
+            }
+
+            if (SSH_CERT_TYPE_ED25519.equals(certificateType)) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Received certificate type: " + certificateType + " matches the expected certificate" +
+                            " type: " + SSH_CERT_TYPE_ED25519);
+                }
+
+                KeyType keyType = KeyType.fromString(SSH_CERT_TYPE_ED25519);
+                PublicKey publicKey;
+
+                try {
+                    publicKey = keyType.readPubKeyFromBuffer(plainBuffer);
+
+                    if (log.isDebugEnabled()) {
+                        log.debug("PublicKey algorithm from certificate: " + publicKey.getAlgorithm());
+                    }
+
+                    if (publicKey instanceof Certificate) {
+                        Certificate certificate = (Certificate) publicKey;
+                        List<String> validPrincipals = certificate.getValidPrincipals();
+
+                        if (validPrincipals != null && !validPrincipals.isEmpty()) {
+                            // Only the 1st user principal is considered.
+                            String principal = validPrincipals.get(0);
+
+                            if (log.isDebugEnabled()) {
+                                log.debug("User principal from certificate: " + principal);
+                            }
+                            return principal;
+                        }
+
+                        if (log.isDebugEnabled()) {
+                            log.debug("No valid principal(s) found in the provided certificate.");
+                        }
+                    }
+                } catch (GeneralSecurityException e) {
+                    log.error(e);
+                }
             }
         }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Certificate does not contain the minimum number of expected sections: 2");
+        }
+
         return null;
     }
 
+    @Override
     public boolean authorizeAccessDelegation(OAuthTokenReqMessageContext tokReqMsgCtx)
             throws IdentityOAuth2Exception {
 
         return true;
     }
+
+    @Override
     public boolean validateScope(OAuthTokenReqMessageContext tokReqMsgCtx)
             throws IdentityOAuth2Exception {
 
         return true;
     }
 }
-

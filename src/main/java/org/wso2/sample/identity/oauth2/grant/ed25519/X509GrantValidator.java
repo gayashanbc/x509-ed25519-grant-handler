@@ -1,5 +1,5 @@
 /*
- * Copyright (c) WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2020, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
  *
  * WSO2 Inc. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -27,8 +27,10 @@ import javax.servlet.http.HttpServletRequest;
  */
 public class X509GrantValidator extends AbstractValidator<HttpServletRequest> {
 
+    private static final String X509_GRANT_PARAM = "x509";
+
     public X509GrantValidator() {
-        // X509 grant param must be in the request parameter
-        requiredParams.add(X509GrantHandler.X509_GRANT_PARAM);
+        // X509 grant param must be in the request parameter.
+        requiredParams.add(X509_GRANT_PARAM);
     }
 }
