@@ -21,11 +21,15 @@ import com.hierynomus.sshj.userauth.certificate.Certificate;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
+import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.oauth2.IdentityOAuth2Exception;
 import org.wso2.carbon.identity.oauth2.model.RequestParameter;
 import org.wso2.carbon.identity.oauth2.token.OAuthTokenReqMessageContext;
 import org.wso2.carbon.identity.oauth2.token.handlers.grant.AbstractAuthorizationGrantHandler;
 import org.wso2.carbon.identity.oauth2.util.OAuth2Util;
+import org.wso2.carbon.user.api.UserStoreException;
+import org.wso2.carbon.user.api.UserStoreManager;
+import org.wso2.sample.identity.oauth2.grant.ed25519.internal.GrantHandlerServiceComponent;
 import org.wso2.sample.identity.oauth2.grant.ed25519.model.sshj.Buffer;
 import org.wso2.sample.identity.oauth2.grant.ed25519.model.sshj.KeyType;
 
@@ -73,18 +77,27 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler  {
         } else {
             if (certParam != null) {
                 username = getUserFromSSHCert(certParam);
-                log.debug("Username is retrieved from Certificate : " + username);
             }
         }
-        if (username != null) {
-            // if valid set authorized mobile number as grant user
-            AuthenticatedUser user = OAuth2Util.getUserFromUserName(username);
-            user.setAuthenticatedSubjectIdentifier(user.toString());
-            oAuthTokenReqMessageContext.setAuthorizedUser(user);
-            oAuthTokenReqMessageContext.setScope(oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getScope());
-            authStatus = true;
+
+        UserStoreManager userStoreManager;
+        int tenantId = IdentityTenantUtil.getTenantId(oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getTenantDomain());
+        try {
+            userStoreManager = GrantHandlerServiceComponent.getRealmService().
+                    getTenantUserRealm(tenantId).getUserStoreManager();
+            if (username != null && userStoreManager != null && !userStoreManager.isExistingUser(username)) {
+                throw new IdentityOAuth2Exception("User: " + username + " does not exist.");
+            }
+        } catch (UserStoreException e) {
+            throw new IdentityOAuth2Exception("Error occurred while getting user store manager", e);
         }
-        return authStatus;
+
+        // if valid set authorized mobile number as grant user
+        AuthenticatedUser user = OAuth2Util.getUserFromUserName(username);
+        user.setAuthenticatedSubjectIdentifier(user.toString());
+        oAuthTokenReqMessageContext.setAuthorizedUser(user);
+        oAuthTokenReqMessageContext.setScope(oAuthTokenReqMessageContext.getOauth2AccessTokenReqDTO().getScope());
+        return true;
     }
 
     private String getUserFromSSHCert(String sshCertificate) {
