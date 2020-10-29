@@ -20,6 +20,7 @@ package org.wso2.sample.identity.oauth2.grant.ed25519;
 
 import com.hierynomus.sshj.userauth.certificate.Certificate;
 import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.model.AuthenticatedUser;
@@ -38,6 +39,7 @@ import org.wso2.sample.identity.oauth2.grant.ed25519.model.sshj.KeyType;
 import java.security.GeneralSecurityException;
 import java.security.PublicKey;
 import java.util.List;
+import java.util.Map;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -47,6 +49,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
 
     private static final String SSH_CERT_TYPE_ED25519 = "ssh-ed25519-cert-v01@openssh.com";
+    private static final String ACCOUNT_LOCKED_CLAIM = "http://wso2.org/claims/identity/accountLocked";
+    private static final String ACCOUNT_DISABLED_CLAIM = "http://wso2.org/claims/identity/accountDisabled";
     private static Log log = LogFactory.getLog(X509GrantHandler.class);
     private static final String X509_GRANT_PARAM = "x509";
 
@@ -82,12 +86,31 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
                 .getTenantDomain());
 
         try {
-            // Check whether the 'Principal' is an existing user.
-            if (userStoreManager != null && !userStoreManager.isExistingUser(username)) {
-                throw new IdentityOAuth2Exception("User: " + username + " does not exist.");
+            if (userStoreManager != null) {
+                // Check whether the 'Principal' is an existing user.
+                if (!userStoreManager.isExistingUser(username)) {
+                    throw new IdentityOAuth2Exception("User: " + username + " does not exist.");
+                }
+
+                // Retrieve 'accountLocked' and 'accountDisabled' claim of user.
+                Map<String, String> userClaimValues = userStoreManager.getUserClaimValues(username,
+                        new String[]{ACCOUNT_LOCKED_CLAIM, ACCOUNT_DISABLED_CLAIM}, null);
+
+                String accountLockedClaimValue = userClaimValues.get(ACCOUNT_LOCKED_CLAIM);
+                String accountDisabledClaimValue = userClaimValues.get(ACCOUNT_DISABLED_CLAIM);
+
+                // Check if user is locked.
+                if (StringUtils.isNotEmpty(accountLockedClaimValue) && Boolean.parseBoolean(accountLockedClaimValue)) {
+                    throw new IdentityOAuth2Exception("User: " + username + " is locked.");
+                }
+
+                // Check if user is disabled.
+                if (StringUtils.isNotEmpty(accountDisabledClaimValue) && Boolean.parseBoolean(accountDisabledClaimValue)) {
+                    throw new IdentityOAuth2Exception("User: " + username + " is disabled.");
+                }
             }
         } catch (UserStoreException e) {
-            throw new IdentityOAuth2Exception("Error occurred while performing 'isExistingUser' operation.", e);
+            throw new IdentityOAuth2Exception("Error occurred while performing user store operation.", e);
         }
 
         AuthenticatedUser user = OAuth2Util.getUserFromUserName(username);
@@ -107,7 +130,7 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
             return GrantHandlerServiceComponent.getRealmService().getTenantUserRealm(tenantId).getUserStoreManager();
 
         } catch (UserStoreException e) {
-            throw new IdentityOAuth2Exception("Error occurred while getting user store manager", e);
+            throw new IdentityOAuth2Exception("Error occurred while getting the user store manager.", e);
         }
     }
 
@@ -134,7 +157,7 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
                 publicKey = keyType.readPubKeyFromBuffer(plainBuffer);
 
                 if (log.isDebugEnabled()) {
-                    log.debug("PublicKey algorithm " + publicKey.getAlgorithm());
+                    log.debug("PublicKey algorithm from certificate: " + publicKey.getAlgorithm());
                 }
 
                 if (publicKey instanceof Certificate) {
@@ -145,7 +168,7 @@ public class X509GrantHandler extends AbstractAuthorizationGrantHandler {
                         String principal = validPrincipals.get(0);
 
                         if (log.isDebugEnabled()) {
-                            log.debug("User principal from cert: " + principal);
+                            log.debug("User principal from certificate: " + principal);
                         }
                         return principal;
                     }
